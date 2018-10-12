@@ -26,42 +26,42 @@ import Poker.Cards
 
 type StateIO a = SS.StateT a IO
 
+newtype BinWord16 = BW16 Word16
+  deriving (Eq, Ord, Num, Bits, FiniteBits)
+
+instance Show BinWord16 where
+  show (BW16 w) = "0b" ++ showIntAtBase 2 intToDigit w ""
+
+newtype HexWord32 = HW32 Word32
+  deriving (Eq, Ord, Num, Bits, FiniteBits)
+
+instance Show HexWord32 where
+  show (HW32 w) = toS $ "0x" <> T.justifyRight 8 '0' (toS $ showHex w "")
+
+newtype HexWord64 = HW64 Word64
+  deriving (Eq, Ord, Num, Bits, FiniteBits)
+
+instance Show HexWord64 where
+  show (HW64 w) = toS $ "0x" <> T.justifyRight 16 '0' (toS $ showHex w "")
+
 insertOn :: (Ord b) => (a -> b) -> a -> [a] -> [a]
 insertOn f = insertBy cmp
   where cmp a b = compare (f a) (f b)
 
-showQud :: Word32 -> Show.ShowS
-showQud w = showIntAtBase 4 intToDigit w
+newtype SuitCount = SuitCount HexWord32
+  deriving (Show, Eq, Ord, Num, Bits)
 
-showBin :: Word32 -> Show.ShowS
-showBin w = showIntAtBase 2 intToDigit w
+newtype RankCount = RankCount HexWord64
+  deriving (Show, Eq, Ord, Num, Bits)
 
-showSuits :: SuitCount -> Text
-showSuits (SuitCount s) = T.justifyRight 8 '0' (toS $ showHex s "")
+newtype RankSet = RankSet BinWord16
+  deriving (Show, Eq, Ord, Num, Bits, FiniteBits)
 
-showRanks :: RankCount -> Text
-showRanks (RankCount r) = T.justifyRight 16 '0' (toS $ showHex r "")
+newtype AceRankSet = AceRankSet BinWord16
+  deriving (Show, Eq, Ord, Num, Bits, FiniteBits)
 
-showBits :: Word32 -> Text
-showBits w = T.justifyRight 14 '0' (toS $ showBin w "")
-
-newtype SuitCount = SuitCount Word32
-  deriving (Eq, Num, Bits)
-newtype RankCount = RankCount { getRankCount :: Word64 }
-  deriving (Eq, Ord, Num, Bits)
-newtype RankSet = RankSet Word32
-  deriving (Eq, Ord, Num, Bits, FiniteBits)
-newtype AceRankSet = AceRankSet Word32
-  deriving (Eq, Num, Bits)
-
-data Dup = Dup Word64 Rank
+data Dup = Dup RankCount Rank
   deriving (Show, Eq, Ord)
-
-instance Show RankCount where
-  show rs = toS ("RankCount 0x" <> showRanks rs)
-
-instance Show RankSet where
-  show (RankSet rs) = toS ("(RankSet 0b" <> showBits rs <> ")")
 
 data Score
   = HighCard RankSet
@@ -84,13 +84,13 @@ data Score
 toAce :: RankSet -> AceRankSet
 toAce (RankSet xs) = AceRankSet (xs .|. (shiftR xs 13))
 
-suitMask :: Word32
+suitMask :: SuitCount
 suitMask = 0xFF
 
 rankMask :: RankCount
 rankMask = RankCount 0xF
 
-straightMask :: Word32
+straightMask :: AceRankSet
 straightMask = 0x1F
 
 score :: Deck -> Score
@@ -122,10 +122,9 @@ score h =
         (Just i, _, _, _) -> Straight i
         (_, _, _, (Dup 3 n:_)) -> Trip n (trim 2 (clearBit xs' (fromEnum n)))
         (_, _, _, (Dup 2 n:Dup 2 m:_)) ->
-          TwoPair
-            n
-            m
-            (trim (pc - 3) (xs' `clearBit` (fromEnum n) `clearBit` (fromEnum m)))
+          TwoPair n m
+            (trim (pc - 3) (xs' `clearBit` (fromEnum n)
+                                `clearBit` (fromEnum m)))
         (_, _, _, (Dup 2 n:_)) -> Pair n (trim 2 (clearBit xs' (fromEnum n)))
   where
     incSuit :: SuitCount -> Card -> SuitCount
@@ -138,14 +137,14 @@ score h =
     setRank a (Rank r, _) = a .|. (1 `shiftL` r)
 
     findStraight :: AceRankSet -> Maybe Int
-    findStraight (AceRankSet xs) =
+    findStraight xs =
       getFirst $
       foldr (goStraight xs) (First Nothing) [countTrailingZeros xs .. 9]
 
-    goStraight :: Word32 -> Int -> First Int -> First Int
+    goStraight :: AceRankSet -> Int -> First Int -> First Int
     goStraight xs i m = isStraight xs i <> m
 
-    isStraight :: Word32 -> Int -> First Int
+    isStraight :: AceRankSet -> Int -> First Int
     isStraight xs i =
       First $
       let m = straightMask `shiftL` i
@@ -160,7 +159,7 @@ score h =
     goFlush ss i m = isFlush ss i <> m
 
     isFlush :: SuitCount -> Int -> First Suit
-    isFlush (SuitCount ss) i =
+    isFlush ss i =
       First $
       if (ss `shiftR` (i * 8)) .&. suitMask >= 5
         then Just (toEnum i)
@@ -172,7 +171,7 @@ score h =
 
     goDup :: RankCount -> Rank -> Dup
     goDup rs r@(Rank n) =
-      Dup (getRankCount ((rs `shiftR` (4 * n)) .&. rankMask)) r
+      Dup ((rs `shiftR` (4 * n)) .&. rankMask) r
 
     trim :: Int -> RankSet -> RankSet
     trim 0 rs = rs
